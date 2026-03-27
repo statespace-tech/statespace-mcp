@@ -29,7 +29,7 @@
 
 ---
 
-AI doesn't know your data. Statespace helps you document and connect your data to AI, all-in-one. Build RAG, text-to-SQL, knowledge bases, and more, using nothing but CLIs and Markdown. Once you’ve created an app, you can deploy, manage, and share it from our [cloud platform](https://statespace.com/).
+AI doesn't know your data. Statespace helps you quickly wire up the APIs and MCPs your agents need to understand and work with it. Build RAG, text-to-SQL, knowledge bases, and more, in just a few lines of code. Once you’ve created an app, you can deploy, manage, and share it from our [cloud platform](https://statespace.com/).
 
 ## Example
 
@@ -57,7 +57,7 @@ Configure the MCP server on your client:
   "command": "uvx",
   "args": [
     "statespace-mcp",
-    "/path/to/README.md"
+    "path/to/app/"
   ],
   "env": {
     "DB": "postgresql://user:pass@host:port/db"
@@ -69,7 +69,9 @@ Alternatively, install the Statespace CLI and agent skill:
 
 ```bash
 npm install -g statespace 
-statespace serve /path/to/README.md --env DB=postgresql://user:pass@host:port/db --port 8080
+
+# run the app locally
+statespace serve path/to/app/ --env DB=postgresql://user:pass@host:port/db --port 8080
 ```
 
 
@@ -93,7 +95,7 @@ claude "/statespace Use the API at http://127.0.01:8080 to find out how many use
 Add as much context and tools as your application needs
 
 ```text
-demo/
+path/to/app/
 ├── README.md           # from above
 ├── script.py
 └── schema/
@@ -121,9 +123,9 @@ tools:
 
 ### 5. Deploy it
 
-Optionally, create a [Statespace account](https://statespace.com/auth/login) to deploy your app to the cloud to get a shareable URL
+Optionally, create a [Statespace account](https://statespace.com/auth/login) to deploy your app and get a shareable URL
 
-Then, simply replace your app's path with this URL: `/path/to/README.md` → `https://demo.statespace.app`
+Then, simply replace your app's path with this URL: `path/to/app` → `https://demo.statespace.app`
 
 ### More examples
 
