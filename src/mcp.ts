@@ -6,9 +6,9 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import path from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
+import path from "path";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 

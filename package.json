@@ -1,26 +1,25 @@
 {
-  "name": "statespace",
+  "name": "statespace-mcp",
   "version": "0.1.0",
-  "description": "Statespace server and MCP adapter",
+  "description": "MCP server for Statespace apps",
   "type": "module",
   "bin": {
-    "statespace": "./dist/cli.js"
+    "statespace-mcp": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/prompts && cp -r src/prompts dist/prompts && rm -rf dist/skills && cp -r src/skills dist/skills",
+    "build": "tsc && rm -rf dist/prompts && cp -r src/prompts dist/prompts",
+    "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "glob": "^11.0.0",
-    "js-yaml": "^4.1.0"
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.2"
   }
 }
