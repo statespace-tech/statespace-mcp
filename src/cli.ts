@@ -18,7 +18,7 @@ function usage(): never {
     [
       "Usage:",
       "  statespace serve <path> [--host <host>] [--port <port>]",
-      "  statespace mcp <path|url>",
+      "  statespace mcp <url>",
       "  statespace read [--root <dir>] <page>",
       "  statespace run [--root <dir>] <page> <command...>",
       "",
@@ -63,11 +63,12 @@ if (command === "serve") {
   const targetArg = args[1];
   if (!targetArg) usage();
 
-  const isRemote =
-    targetArg.startsWith("http://") || targetArg.startsWith("https://");
-  const target = isRemote ? targetArg : path.resolve(targetArg);
+  if (!targetArg.startsWith("http://") && !targetArg.startsWith("https://")) {
+    process.stderr.write("Error: mcp requires an http or https URL\n");
+    process.exit(1);
+  }
 
-  startMcpServer(target, isRemote ? {} : collectProcessEnv()).catch((err: unknown) => {
+  startMcpServer(targetArg).catch((err: unknown) => {
     process.stderr.write(`Error: ${String(err)}\n`);
     process.exit(1);
   });

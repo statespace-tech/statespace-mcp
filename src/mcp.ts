@@ -1,4 +1,5 @@
 // MCP server — two tools: read_page and run_command
+// Purely an HTTP proxy: all tool calls go through the Statespace HTTP API.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -6,7 +7,6 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import path from "path";
-import fs from "fs/promises";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 
@@ -15,61 +15,12 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 export function loadAgentsMcp(): string {
   return readFileSync(path.join(__dirname, "prompts", "mcp", "AGENTS.md"), "utf8").trim();
 }
-import { resolvePath } from "./runtime/content.js";
-import { processComponentBlocks } from "./runtime/components.js";
-import { mergeEvalEnv, validateEnvMap } from "./runtime/env.js";
-import { parseFrontmatter } from "./runtime/frontmatter.js";
-import { isValidToolCall, expandCommandForExecution } from "./runtime/validation.js";
-import { executeCommand } from "./runtime/executor.js";
 
 // ---------------------------------------------------------------------------
-// Local mode — reads from a filesystem root
+// HTTP calls to the Statespace serve API
 // ---------------------------------------------------------------------------
 
-async function localGetPage(
-  rootDir: string,
-  serverEnv: Record<string, string>,
-  pagePath: string
-): Promise<string> {
-  const filePath = await resolvePath(rootDir, pagePath);
-  const content = await fs.readFile(filePath, "utf8");
-  const workingDir = path.dirname(filePath);
-  return processComponentBlocks(content, workingDir, serverEnv);
-}
-
-async function localCallTool(
-  rootDir: string,
-  serverEnv: Record<string, string>,
-  pagePath: string,
-  command: string[],
-  requestEnv: Record<string, string>
-): Promise<{ stdout: string; stderr: string; returncode: number }> {
-  const filePath = await resolvePath(rootDir, pagePath);
-  const content = await fs.readFile(filePath, "utf8");
-  const frontmatter = parseFrontmatter(content);
-
-  if (!isValidToolCall(command, frontmatter.specs)) {
-    throw new Error(`Command not allowed: ${command.join(" ")}`);
-  }
-
-  const mergedEnv = mergeEvalEnv(serverEnv, requestEnv);
-  const expandedCommand = expandCommandForExecution(
-    command,
-    frontmatter.specs,
-    mergedEnv
-  );
-  const workingDir = path.dirname(filePath);
-  return executeCommand(expandedCommand, workingDir, mergedEnv);
-}
-
-// ---------------------------------------------------------------------------
-// Remote mode — proxies to a running statespace serve instance
-// ---------------------------------------------------------------------------
-
-async function remoteGetPage(
-  baseUrl: string,
-  pagePath: string
-): Promise<string> {
+async function getPage(baseUrl: string, pagePath: string): Promise<string> {
   const url = new URL(pagePath, baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
   const response = await fetch(url.toString());
   if (!response.ok) {
@@ -83,7 +34,7 @@ async function remoteGetPage(
   return response.text();
 }
 
-async function remoteCallTool(
+async function callTool(
   baseUrl: string,
   pagePath: string,
   command: string[],
@@ -112,14 +63,7 @@ async function remoteCallTool(
 // MCP server entry point
 // ---------------------------------------------------------------------------
 
-
-export async function startMcpServer(
-  target: string,
-  serverEnv: Record<string, string> = {}
-): Promise<void> {
-  const isRemote =
-    target.startsWith("http://") || target.startsWith("https://");
-
+export async function startMcpServer(baseUrl: string): Promise<void> {
   const instructions = loadAgentsMcp();
 
   const server = new Server(
@@ -176,20 +120,13 @@ export async function startMcpServer(
     const { name, arguments: args } = request.params;
 
     if (name === "read_page") {
-      const pagePath =
-        (args?.["path"] as string | undefined) ?? "README.md";
-
+      const pagePath = (args?.["path"] as string | undefined) ?? "README.md";
       try {
-        const content = isRemote
-          ? await remoteGetPage(target, pagePath)
-          : await localGetPage(target, serverEnv, pagePath);
-
+        const content = await getPage(baseUrl, pagePath);
         return { content: [{ type: "text" as const, text: content }] };
       } catch (e) {
         return {
-          content: [
-            { type: "text" as const, text: `Error: ${(e as Error).message}` },
-          ],
+          content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
           isError: true,
         };
       }
@@ -198,40 +135,17 @@ export async function startMcpServer(
     if (name === "run_command") {
       const pagePath = args?.["path"] as string | undefined;
       const command = args?.["command"] as string[] | undefined;
-      const requestEnv =
-        (args?.["env"] as Record<string, string> | undefined) ?? {};
+      const requestEnv = (args?.["env"] as Record<string, string> | undefined) ?? {};
 
       if (!pagePath || !command || command.length === 0) {
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: "Error: path and command are required",
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const envErr = validateEnvMap(requestEnv);
-      if (envErr) {
-        return {
-          content: [{ type: "text" as const, text: `Error: ${envErr}` }],
+          content: [{ type: "text" as const, text: "Error: path and command are required" }],
           isError: true,
         };
       }
 
       try {
-        const result = isRemote
-          ? await remoteCallTool(target, pagePath, command, requestEnv)
-          : await localCallTool(
-              target,
-              serverEnv,
-              pagePath,
-              command,
-              requestEnv
-            );
-
+        const result = await callTool(baseUrl, pagePath, command, requestEnv);
         const text = [
           result.stdout,
           result.stderr ? `[stderr]: ${result.stderr}` : "",
@@ -239,22 +153,17 @@ export async function startMcpServer(
         ]
           .filter(Boolean)
           .join("\n");
-
         return { content: [{ type: "text" as const, text }] };
       } catch (e) {
         return {
-          content: [
-            { type: "text" as const, text: `Error: ${(e as Error).message}` },
-          ],
+          content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
           isError: true,
         };
       }
     }
 
     return {
-      content: [
-        { type: "text" as const, text: `Unknown tool: ${name}` },
-      ],
+      content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
       isError: true,
     };
   });
