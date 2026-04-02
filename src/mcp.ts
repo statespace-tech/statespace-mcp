@@ -6,23 +6,28 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import path from "path";
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
+function authHeaders(token: string | undefined): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
-export function loadAgentsMcp(): string {
-  return readFileSync(path.join(__dirname, "prompts", "mcp", "AGENTS.md"), "utf8").trim();
+function resolveUrl(baseUrl: string, pagePath: string): string {
+  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+  return new URL(pagePath, base).toString();
 }
 
 // ---------------------------------------------------------------------------
-// HTTP calls to the Statespace serve API
+// HTTP calls to the Statespace API
 // ---------------------------------------------------------------------------
 
-async function getPage(baseUrl: string, pagePath: string): Promise<string> {
-  const url = new URL(pagePath, baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
-  const response = await fetch(url.toString());
+async function fetchInstructions(baseUrl: string, token: string | undefined): Promise<string> {
+  const response = await fetch(baseUrl, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error(`Failed to fetch instructions: HTTP ${response.status}`);
+  return response.text();
+}
+
+async function getPage(baseUrl: string, token: string | undefined, pagePath: string): Promise<string> {
+  const response = await fetch(resolveUrl(baseUrl, pagePath), { headers: authHeaders(token) });
   if (!response.ok) {
     let errorMsg = `HTTP ${response.status}`;
     try {
@@ -36,14 +41,14 @@ async function getPage(baseUrl: string, pagePath: string): Promise<string> {
 
 async function callTool(
   baseUrl: string,
+  token: string | undefined,
   pagePath: string,
   command: string[],
   requestEnv: Record<string, string>
 ): Promise<{ stdout: string; stderr: string; returncode: number }> {
-  const url = new URL(pagePath, baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
-  const response = await fetch(url.toString(), {
+  const response = await fetch(resolveUrl(baseUrl, pagePath), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ command, env: requestEnv }),
   });
 
@@ -64,11 +69,12 @@ async function callTool(
 // ---------------------------------------------------------------------------
 
 export async function startMcpServer(baseUrl: string): Promise<void> {
-  const instructions = loadAgentsMcp();
+  const token = process.env["STATESPACE_TOKEN"];
+  const instructions = await fetchInstructions(baseUrl, token);
 
   const server = new Server(
-    { name: "statespace", version: "0.1.0" },
-    { capabilities: { tools: {} }, instructions: instructions }
+    { name: "statespace-mcp", version: "0.1.0" },
+    { capabilities: { tools: {} }, instructions }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -122,7 +128,7 @@ export async function startMcpServer(baseUrl: string): Promise<void> {
     if (name === "read_page") {
       const pagePath = (args?.["path"] as string | undefined) ?? "README.md";
       try {
-        const content = await getPage(baseUrl, pagePath);
+        const content = await getPage(baseUrl, token, pagePath);
         return { content: [{ type: "text" as const, text: content }] };
       } catch (e) {
         return {
@@ -145,7 +151,7 @@ export async function startMcpServer(baseUrl: string): Promise<void> {
       }
 
       try {
-        const result = await callTool(baseUrl, pagePath, command, requestEnv);
+        const result = await callTool(baseUrl, token, pagePath, command, requestEnv);
         const text = [
           result.stdout,
           result.stderr ? `[stderr]: ${result.stderr}` : "",

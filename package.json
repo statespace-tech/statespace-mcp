@@ -7,7 +7,7 @@
     "statespace-mcp": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/prompts && cp -r src/prompts dist/prompts",
+    "build": "tsc",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },

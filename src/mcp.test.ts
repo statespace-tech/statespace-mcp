@@ -1,15 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "http";
 
-// Spin up a minimal fake Statespace server for the tests
 let server: http.Server;
 let baseUrl: string;
 
+// Track auth headers received by the fake server
+const receivedAuth: (string | undefined)[] = [];
+
 beforeAll(async () => {
   server = http.createServer((req, res) => {
+    receivedAuth.push(req.headers["authorization"]);
     const url = new URL(req.url ?? "/", "http://localhost");
 
     if (req.method === "GET") {
+      if (url.pathname === "/") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("# App instructions");
+        return;
+      }
       if (url.pathname === "/README.md") {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("# Hello from test app");
@@ -45,13 +53,12 @@ beforeAll(async () => {
   baseUrl = `http://127.0.0.1:${addr.port}`;
 });
 
-afterAll(() => {
-  server.close();
-});
+afterAll(() => server.close());
 
-// Direct HTTP fetch helpers (mirrors what mcp.ts does internally)
-async function getPage(pagePath: string): Promise<string> {
-  const res = await fetch(`${baseUrl}/${pagePath}`);
+async function getPage(pagePath: string, token?: string): Promise<string> {
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+  const res = await fetch(new URL(pagePath, base).toString(), { headers });
   if (!res.ok) {
     const body = await res.json() as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -59,10 +66,12 @@ async function getPage(pagePath: string): Promise<string> {
   return res.text();
 }
 
-async function callTool(pagePath: string, command: string[]): Promise<{ stdout: string; stderr: string; returncode: number }> {
-  const res = await fetch(`${baseUrl}/${pagePath}`, {
+async function callTool(pagePath: string, command: string[], token?: string): Promise<{ stdout: string; stderr: string; returncode: number }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+  const res = await fetch(new URL(pagePath, base).toString(), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ command }),
   });
   const body = await res.json() as { data?: { stdout: string; stderr: string; returncode: number }; error?: string };
@@ -70,14 +79,34 @@ async function callTool(pagePath: string, command: string[]): Promise<{ stdout: 
   return body.data!;
 }
 
+describe("instructions", () => {
+  it("fetches instructions from the root URL", async () => {
+    const res = await fetch(baseUrl);
+    const text = await res.text();
+    expect(text).toBe("# App instructions");
+  });
+});
+
 describe("read_page", () => {
-  it("returns page content on success", async () => {
+  it("returns page content", async () => {
     const content = await getPage("README.md");
     expect(content).toBe("# Hello from test app");
   });
 
   it("throws on missing page", async () => {
     await expect(getPage("missing.md")).rejects.toThrow("not found");
+  });
+
+  it("sends Authorization header when token provided", async () => {
+    receivedAuth.length = 0;
+    await getPage("README.md", "test-token");
+    expect(receivedAuth[0]).toBe("Bearer test-token");
+  });
+
+  it("sends no Authorization header without token", async () => {
+    receivedAuth.length = 0;
+    await getPage("README.md");
+    expect(receivedAuth[0]).toBeUndefined();
   });
 });
 
@@ -90,5 +119,11 @@ describe("run_command", () => {
 
   it("throws when the server rejects the command", async () => {
     await expect(callTool("README.md", ["rm", "-rf", "/"])).rejects.toThrow("command not allowed");
+  });
+
+  it("sends Authorization header when token provided", async () => {
+    receivedAuth.length = 0;
+    await callTool("README.md", ["ls"], "test-token");
+    expect(receivedAuth[0]).toBe("Bearer test-token");
   });
 });
