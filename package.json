@@ -1,5 +1,5 @@
 {
-  "name": "statespace-mcp",
+  "name": "statespace",
   "version": "0.1.0",
   "description": "CLI and MCP server for searching llms.txt documentation sites",
   "type": "module",
