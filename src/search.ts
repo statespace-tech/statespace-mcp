@@ -61,10 +61,7 @@ export async function runSearch(argv: string[]): Promise<void> {
   }
 
   for (const r of results) {
-    const label =
-      r.site && r.title && r.site !== r.title
-        ? `${r.site} — ${r.title}`
-        : r.site || r.title || r.url;
-    process.stdout.write(`${label}\n  ${r.url}\n`);
+    const source = r.site || r.title || r.url;
+    process.stdout.write(`${source} — ${r.url}\n`);
   }
 }
