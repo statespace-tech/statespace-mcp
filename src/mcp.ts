@@ -6,6 +6,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "http";
+import { getClientId } from './client_id.js';
 
 function buildServer(baseUrl: string): Server {
   const server = new Server(
@@ -19,21 +20,18 @@ function buildServer(baseUrl: string): Server {
         name: "search",
         description:
           "Search documentation indexed from llms.txt sites. " +
-          "Without a site filter, returns the most relevant sites for the query. " +
-          "With a site filter, returns pages within that site.",
+          "Use plain queries to search all pages, or 'site: query' syntax to match a site by name and search within it (e.g. 'supabase: edge functions').",
         inputSchema: {
           type: "object" as const,
           properties: {
-            q: { type: "string", description: "Search query" },
+            q: {
+              type: "string",
+              description: "Search query. Use 'site: query' syntax to target a specific site.",
+            },
             limit: {
               type: "integer",
               description: "Max results to return (default: 10)",
               default: 10,
-            },
-            site: {
-              type: "string",
-              description:
-                "Restrict results to a specific site (accepts site name, domain, or full URL)",
             },
           },
           required: ["q"],
@@ -61,15 +59,18 @@ function buildServer(baseUrl: string): Server {
     }
 
     const limit = (args?.["limit"] as number | undefined) ?? 10;
-    const site = args?.["site"] as string | undefined;
 
     const url = new URL(`${baseUrl}/search`);
     url.searchParams.set("q", q);
     url.searchParams.set("limit", String(limit));
-    if (site) url.searchParams.set("site", site);
 
     try {
-      const response = await fetch(url.toString());
+      const response = await fetch(url.toString(), {
+        headers: {
+          'User-Agent': 'statespace-mcp/0.1.0',
+          'X-Client-Id': getClientId(),
+        },
+      });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const results = await response.json();
       return {

@@ -1,14 +1,15 @@
+import { getClientId } from './client_id.js';
+
 interface Result {
   url: string;
   site: string;
   title: string;
-  score: number;
+  snippet: string;
 }
 
 export async function runSearch(argv: string[]): Promise<void> {
   const positional: string[] = [];
   let limit = 10;
-  let site: string | undefined;
   let baseUrl = "http://localhost:3000";
 
   for (let i = 0; i < argv.length; i++) {
@@ -16,17 +17,17 @@ export async function runSearch(argv: string[]): Promise<void> {
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(
         "Usage: statespace search <query> [options]\n\n" +
+        "Query syntax:\n" +
+        "  <query>              Search all pages across all sites\n" +
+        "  <site>: <query>      Match site name in title, query in content\n\n" +
         "Options:\n" +
         "  --limit, -l <n>     Max results (default: 10)\n" +
-        "  --site,  -s <site>  Restrict to a specific site\n" +
         "  --url,   -u <url>   API base URL (default: http://localhost:3000)\n" +
         "  --help,  -h         Show this help\n"
       );
       process.exit(0);
     } else if (arg === "--limit" || arg === "-l") {
       limit = parseInt(argv[++i] ?? "10", 10);
-    } else if (arg === "--site" || arg === "-s") {
-      site = argv[++i];
     } else if (arg === "--url" || arg === "-u") {
       baseUrl = argv[++i] ?? "http://localhost:3000";
     } else if (!arg.startsWith("-")) {
@@ -43,25 +44,33 @@ export async function runSearch(argv: string[]): Promise<void> {
   const url = new URL(`${baseUrl}/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("limit", String(limit));
-  if (site) url.searchParams.set("site", site);
 
-  let results: Result[];
+  let data: { results: Result[]; total: number };
   try {
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': 'statespace-cli/0.1.0',
+        'X-Client-Id': getClientId(),
+      },
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    results = (await res.json()) as Result[];
+    data = await res.json() as { results: Result[]; total: number };
   } catch (e) {
     process.stderr.write(`Error: ${(e as Error).message}\n`);
     process.exit(1);
   }
 
-  if (results.length === 0) {
+  if (data.results.length === 0) {
     process.stdout.write("no results\n");
     return;
   }
 
-  for (const r of results) {
-    const source = r.site || r.title || r.url;
-    process.stdout.write(`${source} — ${r.url}\n`);
+  for (const r of data.results) {
+    const label = r.site && r.title
+      ? `[${r.site}] ${r.title} — ${r.url}`
+      : r.site
+      ? `[${r.site}] ${r.url}`
+      : r.url;
+    process.stdout.write(`${label}\n`);
   }
 }
