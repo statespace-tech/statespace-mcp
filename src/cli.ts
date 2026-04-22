@@ -2,11 +2,11 @@
 import { startMcpServer } from "./mcp.js";
 
 const args = process.argv.slice(2);
-const url = args[0];
+const url = args[0] ?? "http://localhost:3000";
 
-if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
-  process.stderr.write("Usage: statespace-mcp <url>\n");
-  process.stderr.write("  url  http or https URL of a deployed Statespace app\n");
+if (!url.startsWith("http://") && !url.startsWith("https://")) {
+  process.stderr.write("Usage: statespace-mcp [url]\n");
+  process.stderr.write("  url  Base URL of the doc-search API (default: http://localhost:3000)\n");
   process.exit(1);
 }
 

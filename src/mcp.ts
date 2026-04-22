@@ -1,5 +1,3 @@
-// MCP server — two tools: read_page and run_command
-// Purely an HTTP proxy: all tool calls go through the Statespace HTTP API.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -7,116 +5,35 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-function authHeaders(token: string | undefined): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-function resolveUrl(baseUrl: string, pagePath: string): string {
-  const base = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
-  return new URL(pagePath, base).toString();
-}
-
-// ---------------------------------------------------------------------------
-// HTTP calls to the Statespace API
-// ---------------------------------------------------------------------------
-
-async function fetchInstructions(baseUrl: string, token: string | undefined): Promise<string> {
-  const response = await fetch(baseUrl, { headers: authHeaders(token) });
-  if (!response.ok) throw new Error(`Failed to fetch instructions: HTTP ${response.status}`);
-  return response.text();
-}
-
-async function getPage(baseUrl: string, token: string | undefined, pagePath: string): Promise<string> {
-  const response = await fetch(resolveUrl(baseUrl, pagePath), { headers: authHeaders(token) });
-  if (!response.ok) {
-    let errorMsg = `HTTP ${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) errorMsg = body.error;
-    } catch { /* ignore */ }
-    throw new Error(errorMsg);
-  }
-  return response.text();
-}
-
-async function callTool(
-  baseUrl: string,
-  token: string | undefined,
-  pagePath: string,
-  command: string[],
-  requestEnv: Record<string, string>
-): Promise<{ stdout: string; stderr: string; returncode: number }> {
-  const response = await fetch(resolveUrl(baseUrl, pagePath), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(token) },
-    body: JSON.stringify({ command, env: requestEnv }),
-  });
-
-  const body = (await response.json()) as {
-    data?: { stdout: string; stderr: string; returncode: number };
-    error?: string;
-  };
-
-  if (!response.ok || body.error) {
-    throw new Error(body.error ?? `HTTP ${response.status}`);
-  }
-
-  return body.data!;
-}
-
-// ---------------------------------------------------------------------------
-// MCP server entry point
-// ---------------------------------------------------------------------------
-
 export async function startMcpServer(baseUrl: string): Promise<void> {
-  const token = process.env["STATESPACE_TOKEN"];
-  const instructions = await fetchInstructions(baseUrl, token);
-
   const server = new Server(
-    { name: "statespace-mcp", version: "0.1.0" },
-    { capabilities: { tools: {} }, instructions }
+    { name: "doc-search-mcp", version: "0.1.0" },
+    { capabilities: { tools: {} } }
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "read_page",
-        description: "Read any file from the application. Returns raw content. Start with README.md.",
+        name: "search",
+        description: "Search documentation indexed from llms.txt sites. Without a site filter, returns the most relevant sites for the query. With a site filter, returns pages within that site.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            path: {
+            q: {
               type: "string",
-              description:
-                "Path to the file, relative to the application root (e.g. \"README.md\", \"schema/users.md\", \"data/sales.csv\"). Defaults to README.md.",
-              default: "README.md",
+              description: "Search query",
+            },
+            limit: {
+              type: "integer",
+              description: "Max results to return (default: 10)",
+              default: 10,
+            },
+            site: {
+              type: "string",
+              description: "Restrict results to a specific site (accepts site name, domain, or full URL)",
             },
           },
-        },
-      },
-      {
-        name: "run_command",
-        description: "Execute a command declared in the YAML frontmatter of a Markdown page. Call read_page on the page first to read its command declarations.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the Markdown page whose frontmatter declares this tool.",
-            },
-            command: {
-              type: "array",
-              items: { type: "string" },
-              description:
-                "The full command as an array of strings. Fixed elements must match exactly; fill in placeholders with your values.",
-            },
-            env: {
-              type: "object",
-              additionalProperties: { type: "string" },
-              description: "Optional environment variables to pass to the command.",
-            },
-          },
-          required: ["path", "command"],
+          required: ["q"],
         },
       },
     ],
@@ -125,41 +42,32 @@ export async function startMcpServer(baseUrl: string): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
-    if (name === "read_page") {
-      const pagePath = (args?.["path"] as string | undefined) ?? "README.md";
-      try {
-        const content = await getPage(baseUrl, token, pagePath);
-        return { content: [{ type: "text" as const, text: content }] };
-      } catch (e) {
+    if (name === "search") {
+      const q = args?.["q"] as string | undefined;
+      if (!q) {
         return {
-          content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
-          isError: true,
-        };
-      }
-    }
-
-    if (name === "run_command") {
-      const pagePath = args?.["path"] as string | undefined;
-      const command = args?.["command"] as string[] | undefined;
-      const requestEnv = (args?.["env"] as Record<string, string> | undefined) ?? {};
-
-      if (!pagePath || !command || command.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "Error: path and command are required" }],
+          content: [{ type: "text" as const, text: "Error: q is required" }],
           isError: true,
         };
       }
 
+      const limit = (args?.["limit"] as number | undefined) ?? 10;
+      const site = args?.["site"] as string | undefined;
+
+      const url = new URL(`${baseUrl}/search`);
+      url.searchParams.set("q", q);
+      url.searchParams.set("limit", String(limit));
+      if (site) url.searchParams.set("site", site);
+
       try {
-        const result = await callTool(baseUrl, token, pagePath, command, requestEnv);
-        const text = [
-          result.stdout,
-          result.stderr ? `[stderr]: ${result.stderr}` : "",
-          `[exit ${result.returncode}]`,
-        ]
-          .filter(Boolean)
-          .join("\n");
-        return { content: [{ type: "text" as const, text }] };
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const results = await response.json();
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }],
+        };
       } catch (e) {
         return {
           content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }],
